@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import path from "path";
 import { Effect, Layer, Runtime } from "effect";
 import { createDatabaseLayer } from "./db";
 import { NodeRepository, createNodeRepositoryLayer, NodeNotFound } from "./nodeRepository";
@@ -133,9 +134,23 @@ app.get("/api/nodes", async (req: Request, res: Response) => {
   }
 });
 
+// Serve static frontend files
+const publicPath = path.join(__dirname, "public");
+app.use(express.static(publicPath));
+
 // Health check
 app.get("/health", (req: Request, res: Response) => {
   res.json({ status: "ok" });
+});
+
+// Health check API
+app.get("/api/health", (req: Request, res: Response) => {
+  res.json({ status: "ok" });
+});
+
+// Serve frontend for all other routes (SPA fallback)
+app.get("*", (req: Request, res: Response) => {
+  res.sendFile(path.join(publicPath, "index.html"));
 });
 
 app.listen(PORT, () => {

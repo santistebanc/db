@@ -2,12 +2,16 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY backend/package*.json ./
 
 RUN npm install
 
-COPY . .
+COPY backend . .
 
 RUN npm run build
 
-CMD ["npm", "start"]
+COPY frontend/build ./dist/public
+
+EXPOSE 3000
+
+CMD ["node", "dist/server.js"]
