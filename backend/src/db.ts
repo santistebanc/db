@@ -1,4 +1,4 @@
-import { Effect, Context, Layer } from "effect";
+import { Effect, Context, Layer, Schedule } from "effect";
 import { Pool } from "pg";
 
 export interface Node {
@@ -11,7 +11,7 @@ export interface Node {
 
 export class DatabaseError {
   readonly _tag = "DatabaseError";
-  constructor(readonly message: string, readonly cause?: unknown) {}
+  constructor(readonly message: string, readonly cause?: unknown) { }
 }
 
 // Shared connection pool
@@ -31,7 +31,7 @@ export class Database extends Context.Tag("Database")<
     readonly queryOne: (sql: string, params?: any[]) => Effect.Effect<any, DatabaseError>;
     readonly execute: (sql: string, params?: any[]) => Effect.Effect<void, DatabaseError>;
   }
->() {}
+>() { }
 
 export const createDatabaseLayer = (connectionString: string): Layer.Layer<Database, DatabaseError> => {
   return Layer.succeed(
@@ -45,7 +45,12 @@ export const createDatabaseLayer = (connectionString: string): Layer.Layer<Datab
             return result.rows;
           },
           catch: (error) => new DatabaseError(`Query failed: ${sql}`, error),
-        }),
+        }).pipe(
+          Effect.retry({
+            times: 3,
+            schedule: Schedule.exponential(100),
+          })
+        ),
 
       queryOne: (sql, params = []) =>
         Effect.tryPromise({
@@ -55,7 +60,12 @@ export const createDatabaseLayer = (connectionString: string): Layer.Layer<Datab
             return result.rows[0];
           },
           catch: (error) => new DatabaseError(`Query failed: ${sql}`, error),
-        }),
+        }).pipe(
+          Effect.retry({
+            times: 3,
+            schedule: Schedule.exponential(100),
+          })
+        ),
 
       execute: (sql, params = []) =>
         Effect.tryPromise({
@@ -64,7 +74,12 @@ export const createDatabaseLayer = (connectionString: string): Layer.Layer<Datab
             await pool.query(sql, params);
           },
           catch: (error) => new DatabaseError(`Execute failed: ${sql}`, error),
-        }),
+        }).pipe(
+          Effect.retry({
+            times: 3,
+            schedule: Schedule.exponential(100),
+          })
+        ),
     })
   );
 };
