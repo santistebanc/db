@@ -1,5 +1,9 @@
 import { Effect, Context, Layer, Schedule } from "effect";
 import { Pool } from "pg";
+import { lookup } from "dns";
+import { promisify } from "util";
+
+const lookupAsync = promisify(lookup);
 
 export interface Node {
   id: string;
@@ -14,16 +18,35 @@ export class DatabaseError {
   constructor(readonly message: string, readonly cause?: unknown) { }
 }
 
-// Shared connection pool
 let pool: Pool | null = null;
+let resolvedConnectionString: string | null = null;
 
-const getPool = (connectionString: string): Pool => {
+const getPool = async (connectionString: string): Promise<Pool> => {
   if (!pool) {
+    if (!resolvedConnectionString) {
+      try {
+        const url = new URL(connectionString);
+        const hostname = url.hostname;
+        if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname) && hostname !== 'localhost') {
+          console.log(`[Database] Pre-resolving ${hostname}...`);
+          const { address } = await lookupAsync(hostname);
+          console.log(`[Database] Resolved ${hostname} to ${address}`);
+          url.hostname = address;
+          resolvedConnectionString = url.toString();
+        } else {
+          resolvedConnectionString = connectionString;
+        }
+      } catch (err: any) {
+        console.warn("[Database] DNS pre-resolution failed, using original string", err);
+        resolvedConnectionString = connectionString;
+      }
+    }
+
     pool = new Pool({
-      connectionString,
-      connectionTimeoutMillis: 5000,
+      connectionString: resolvedConnectionString,
+      connectionTimeoutMillis: 10000,
       idleTimeoutMillis: 30000,
-      max: 10
+      max: 20
     });
     pool.on('error', (err) => {
       console.error('[Database Pool Error]', err);
@@ -48,8 +71,8 @@ export const createDatabaseLayer = (connectionString: string): Layer.Layer<Datab
       query: (sql, params = []) =>
         Effect.tryPromise({
           try: async () => {
-            const pool = getPool(connectionString);
-            const result = await pool.query(sql, params);
+            const currentPool = await getPool(connectionString);
+            const result = await currentPool.query(sql, params);
             return result.rows;
           },
           catch: (error) => {
@@ -66,8 +89,8 @@ export const createDatabaseLayer = (connectionString: string): Layer.Layer<Datab
       queryOne: (sql, params = []) =>
         Effect.tryPromise({
           try: async () => {
-            const pool = getPool(connectionString);
-            const result = await pool.query(sql, params);
+            const currentPool = await getPool(connectionString);
+            const result = await currentPool.query(sql, params);
             return result.rows[0];
           },
           catch: (error) => {
@@ -84,8 +107,8 @@ export const createDatabaseLayer = (connectionString: string): Layer.Layer<Datab
       execute: (sql, params = []) =>
         Effect.tryPromise({
           try: async () => {
-            const pool = getPool(connectionString);
-            await pool.query(sql, params);
+            const currentPool = await getPool(connectionString);
+            await currentPool.query(sql, params);
           },
           catch: (error) => {
             console.error(`[Database Error] SQL: ${sql}`, error);
