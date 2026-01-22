@@ -15,6 +15,30 @@ const DATABASE_URL = process.env.DATABASE_URL || "";
 app.use(cors());
 app.use(express.json());
 
+// Request logging middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  const timestamp = new Date().toISOString();
+
+  // Log request
+  console.log(`[${timestamp}] ${req.method} ${req.url}`);
+  if (Object.keys(req.query).length > 0) {
+    console.log("Query:", JSON.stringify(req.query, null, 2));
+  }
+  if (req.body && Object.keys(req.body).length > 0) {
+    console.log("Body:", JSON.stringify(req.body, null, 2));
+  }
+
+  // Log response when finished
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
+  });
+
+  next();
+});
+
+
 // Create merged runtime layer - compose layers properly
 const layer = createNodeRepositoryLayer().pipe(
   Layer.provide(createDatabaseLayer(DATABASE_URL))
