@@ -24,7 +24,7 @@ function App() {
   const [editData, setEditData] = useState("{}");
   const [editTags, setEditTags] = useState("");
 
-  const API_URL = "http://localhost:3000/api";
+  const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3000/api";
 
   useEffect(() => {
     fetchNodes();
