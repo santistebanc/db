@@ -1,9 +1,6 @@
 import { Effect, Context, Layer, Schedule } from "effect";
 import { Pool } from "pg";
-import { lookup } from "dns";
-import { promisify } from "util";
-
-const lookupAsync = promisify(lookup);
+import { resolve4 } from "dns/promises";
 
 export interface Node {
   id: string;
@@ -21,20 +18,20 @@ export class DatabaseError {
 let pool: Pool | null = null;
 let resolvedConnectionString: string | null = null;
 
-const resolveHostname = async (hostname: string, maxRetries = 5): Promise<string> => {
-  for (let i = 0; i < maxRetries; i++) {
+const forcefulResolve = async (hostname: string): Promise<string> => {
+  const hostnamesToTry = [hostname, "db-postgres-1"];
+
+  for (const host of hostnamesToTry) {
     try {
-      // Force IPv4 and use a small timeout for each attempt
-      const { address } = await lookupAsync(hostname, { family: 4 });
-      if (address) return address;
-    } catch (err) {
-      if (i === maxRetries - 1) {
-        console.error(`[Database] All DNS resolution attempts failed for ${hostname}`);
-        throw err;
+      console.log(`[Database] Trying direct DNS resolve for: ${host}`);
+      // resolve4 uses raw DNS queries and bypasses OS cache/getaddrinfo
+      const addresses = await resolve4(host);
+      if (addresses && addresses.length > 0) {
+        console.log(`[Database] Successfully resolved ${host} to IP: ${addresses[0]}`);
+        return addresses[0];
       }
-      const delay = Math.pow(2, i) * 200;
-      console.warn(`[Database] DNS resolution for ${hostname} failed (Attempt ${i + 1}/${maxRetries}). Retrying in ${delay}ms...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
+    } catch (err) {
+      console.warn(`[Database] Direct resolve failed for ${host}: ${String(err)}`);
     }
   }
   return hostname;
@@ -45,26 +42,24 @@ const getPool = async (connectionString: string): Promise<Pool> => {
     if (!resolvedConnectionString) {
       try {
         const url = new URL(connectionString);
-        const hostname = url.hostname;
+        const originalHost = url.hostname;
 
-        if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname) && hostname !== 'localhost') {
-          console.log(`[Database] Pre-resolving hostname: ${hostname}`);
-          const address = await resolveHostname(hostname);
-          console.log(`[Database] Success: Resolved ${hostname} to ${address}`);
-          url.hostname = address;
+        if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(originalHost) && originalHost !== 'localhost') {
+          const ip = await forcefulResolve(originalHost);
+          url.hostname = ip;
           resolvedConnectionString = url.toString();
         } else {
           resolvedConnectionString = connectionString;
         }
       } catch (err: any) {
-        console.error("[Database] Critical DNS failure, falling back to original string", err);
+        console.error("[Database] Pre-resolution failed", err);
         resolvedConnectionString = connectionString;
       }
     }
 
     pool = new Pool({
       connectionString: resolvedConnectionString,
-      connectionTimeoutMillis: 15000, // Increased timeout
+      connectionTimeoutMillis: 20000, // Higher timeout for slow networks
       idleTimeoutMillis: 30000,
       max: 20
     });
