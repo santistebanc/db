@@ -21,33 +21,54 @@ export class DatabaseError {
 let pool: Pool | null = null;
 let resolvedConnectionString: string | null = null;
 
+const resolveHostname = async (hostname: string, maxRetries = 5): Promise<string> => {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      // Force IPv4 and use a small timeout for each attempt
+      const { address } = await lookupAsync(hostname, { family: 4 });
+      if (address) return address;
+    } catch (err) {
+      if (i === maxRetries - 1) {
+        console.error(`[Database] All DNS resolution attempts failed for ${hostname}`);
+        throw err;
+      }
+      const delay = Math.pow(2, i) * 200;
+      console.warn(`[Database] DNS resolution for ${hostname} failed (Attempt ${i + 1}/${maxRetries}). Retrying in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  return hostname;
+};
+
 const getPool = async (connectionString: string): Promise<Pool> => {
   if (!pool) {
     if (!resolvedConnectionString) {
       try {
         const url = new URL(connectionString);
         const hostname = url.hostname;
+
         if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname) && hostname !== 'localhost') {
-          console.log(`[Database] Pre-resolving ${hostname}...`);
-          const { address } = await lookupAsync(hostname);
-          console.log(`[Database] Resolved ${hostname} to ${address}`);
+          console.log(`[Database] Pre-resolving hostname: ${hostname}`);
+          const address = await resolveHostname(hostname);
+          console.log(`[Database] Success: Resolved ${hostname} to ${address}`);
           url.hostname = address;
           resolvedConnectionString = url.toString();
         } else {
           resolvedConnectionString = connectionString;
         }
       } catch (err: any) {
-        console.warn("[Database] DNS pre-resolution failed, using original string", err);
+        console.error("[Database] Critical DNS failure, falling back to original string", err);
         resolvedConnectionString = connectionString;
       }
     }
 
     pool = new Pool({
       connectionString: resolvedConnectionString,
-      connectionTimeoutMillis: 10000,
+      connectionTimeoutMillis: 15000, // Increased timeout
       idleTimeoutMillis: 30000,
       max: 20
     });
+
     pool.on('error', (err) => {
       console.error('[Database Pool Error]', err);
     });
