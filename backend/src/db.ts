@@ -19,7 +19,15 @@ let pool: Pool | null = null;
 
 const getPool = (connectionString: string): Pool => {
   if (!pool) {
-    pool = new Pool({ connectionString });
+    pool = new Pool({
+      connectionString,
+      connectionTimeoutMillis: 5000,
+      idleTimeoutMillis: 30000,
+      max: 10
+    });
+    pool.on('error', (err) => {
+      console.error('[Database Pool Error]', err);
+    });
   }
   return pool;
 };
@@ -44,14 +52,15 @@ export const createDatabaseLayer = (connectionString: string): Layer.Layer<Datab
             const result = await pool.query(sql, params);
             return result.rows;
           },
-          catch: (error) => new DatabaseError(`Query failed: ${sql}`, error),
+          catch: (error) => {
+            console.error(`[Database Error] SQL: ${sql}`, error);
+            return new DatabaseError(`Query failed: ${sql}`, error);
+          }
         }).pipe(
-          Effect.tapError((err) =>
-            Effect.sync(() => console.warn(`[Database] Query failed, retrying... Error: ${err.message}`))
-          ),
-          Effect.retry(
-            Schedule.exponential(200).pipe(Schedule.intersect(Schedule.recurs(10)))
-          )
+          Effect.retry({
+            times: 2,
+            schedule: Schedule.exponential(500),
+          })
         ),
 
       queryOne: (sql, params = []) =>
@@ -61,14 +70,15 @@ export const createDatabaseLayer = (connectionString: string): Layer.Layer<Datab
             const result = await pool.query(sql, params);
             return result.rows[0];
           },
-          catch: (error) => new DatabaseError(`Query failed: ${sql}`, error),
+          catch: (error) => {
+            console.error(`[Database Error] SQL: ${sql}`, error);
+            return new DatabaseError(`Query failed: ${sql}`, error);
+          }
         }).pipe(
-          Effect.tapError((err) =>
-            Effect.sync(() => console.warn(`[Database] QueryOne failed, retrying... Error: ${err.message}`))
-          ),
-          Effect.retry(
-            Schedule.exponential(200).pipe(Schedule.intersect(Schedule.recurs(10)))
-          )
+          Effect.retry({
+            times: 2,
+            schedule: Schedule.exponential(500),
+          })
         ),
 
       execute: (sql, params = []) =>
@@ -77,14 +87,15 @@ export const createDatabaseLayer = (connectionString: string): Layer.Layer<Datab
             const pool = getPool(connectionString);
             await pool.query(sql, params);
           },
-          catch: (error) => new DatabaseError(`Execute failed: ${sql}`, error),
+          catch: (error) => {
+            console.error(`[Database Error] SQL: ${sql}`, error);
+            return new DatabaseError(`Execute failed: ${sql}`, error);
+          }
         }).pipe(
-          Effect.tapError((err) =>
-            Effect.sync(() => console.warn(`[Database] Execute failed, retrying... Error: ${err.message}`))
-          ),
-          Effect.retry(
-            Schedule.exponential(200).pipe(Schedule.intersect(Schedule.recurs(10)))
-          )
+          Effect.retry({
+            times: 2,
+            schedule: Schedule.exponential(500),
+          })
         ),
     })
   );
