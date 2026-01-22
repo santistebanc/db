@@ -13,7 +13,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -28,6 +28,7 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/nodes_db
       PORT: 3000
       NODE_ENV: production
+      UV_THREADPOOL_SIZE: 64
     depends_on:
       postgres:
         condition: service_healthy

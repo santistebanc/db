@@ -1,9 +1,8 @@
 
 # Build frontend
-FROM node:20-alpine as frontend-builder
+FROM node:20-slim as frontend-builder
 
 WORKDIR /frontend
-
 
 COPY frontend/package*.json ./
 RUN npm install --legacy-peer-deps
@@ -12,7 +11,7 @@ COPY frontend ./
 RUN npm run build
 
 # Build backend
-FROM node:20-alpine as backend-builder
+FROM node:20-slim as backend-builder
 
 WORKDIR /app
 
@@ -23,7 +22,7 @@ COPY backend ./
 RUN npm run build
 
 # Final image
-FROM node:20-alpine
+FROM node:20-slim
 
 WORKDIR /app
 
