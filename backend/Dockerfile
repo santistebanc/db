@@ -1,16 +1,34 @@
-FROM node:20-alpine
+
+# Build frontend
+FROM node:20-alpine as frontend-builder
+
+WORKDIR /frontend
+
+COPY frontend/package*.json ./
+RUN npm install
+
+COPY frontend ./
+RUN npm run build
+
+# Build backend
+FROM node:20-alpine as backend-builder
 
 WORKDIR /app
 
 COPY backend/package*.json ./
-
 RUN npm install
 
-COPY backend . .
-
+COPY backend ./
 RUN npm run build
 
-COPY frontend/build ./dist/public
+# Final image
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY --from=backend-builder /app/dist ./dist
+COPY --from=backend-builder /app/node_modules ./node_modules
+COPY --from=frontend-builder /frontend/build ./dist/public
 
 EXPOSE 3000
 
