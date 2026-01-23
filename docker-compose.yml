@@ -3,9 +3,9 @@ services:
     image: postgres:15-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: nodes_db
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-nodes_db}
     ports:
       - "5432:5432"
     volumes:
@@ -14,7 +14,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -28,7 +28,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/nodes_db
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/nodes_db}
       PORT: 3000
       NODE_ENV: production
       UV_THREADPOOL_SIZE: 64
@@ -50,7 +50,7 @@ services:
     ports:
       - "5050:8081"
     environment:
-      PGWEB_DATABASE_URL: postgres://postgres:postgres@postgres:5432/nodes_db?sslmode=disable
+      PGWEB_DATABASE_URL: ${PGWEB_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/nodes_db?sslmode=disable}
     networks:
       - app-network
     depends_on:
