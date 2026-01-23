@@ -1,8 +1,7 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -18,12 +17,14 @@ services:
       test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 10s
 
   backend:
     build:
       context: .
       dockerfile: ./backend/Dockerfile
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
@@ -36,12 +37,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    stdin_open: true
-    tty: true
+    healthcheck:
+      test: [ "CMD", "node", "-e", "require('http').get('http://localhost:3000/api/nodes', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   pgadmin:
     image: sosedoff/pgweb:latest
-    restart: on-failure
+    restart: unless-stopped
     ports:
       - "5050:8081"
     environment:

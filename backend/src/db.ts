@@ -19,22 +19,35 @@ let pool: Pool | null = null;
 let resolvedConnectionString: string | null = null;
 
 const resolveWithRetry = async (hostname: string): Promise<string> => {
-  const targets = [hostname, "db-postgres-1", "127.0.0.1"];
-  for (const target of targets) {
-    try {
-      if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(target)) return target;
-      console.log(`[Database] Resolving: ${target}`);
-      const addresses = await dns.resolve4(target);
-      if (addresses && addresses.length > 0) {
-        console.log(`[Database] Success: ${target} -> ${addresses[0]}`);
-        return addresses[0];
+  const targets = [hostname, `${hostname}-1`, "db-postgres-1", "postgres-1"];
+  const maxAttempts = 5;
+  const delayMs = 2000;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    for (const target of targets) {
+      try {
+        if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(target)) return target;
+        console.log(`[Database] DNS attempt ${attempt}/${maxAttempts} for: ${target}`);
+        const addresses = await dns.resolve4(target);
+        if (addresses && addresses.length > 0) {
+          console.log(`[Database] SUCCESS: ${target} -> ${addresses[0]}`);
+          return addresses[0];
+        }
+      } catch (e) {
+        if (attempt === maxAttempts) {
+          console.warn(`[Database] DNS lookup failed for ${target}: ${String(e)}`);
+        }
       }
-    } catch (e) {
-      console.warn(`[Database] Lookup failed for ${target}: ${String(e)}`);
+    }
+    if (attempt < maxAttempts) {
+      console.log(`[Database] Waiting ${delayMs}ms before retry...`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
     }
   }
+  console.warn(`[Database] All DNS attempts exhausted, using hostname: ${hostname}`);
   return hostname;
 };
+
 
 const getPool = async (connectionString: string): Promise<Pool> => {
   if (!pool) {
