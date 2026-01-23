@@ -1,184 +1,230 @@
-import express, { Request, Response } from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import path from "path";
-import { Effect, Layer, Runtime } from "effect";
-import { createDatabaseLayer } from "./db";
-import { NodeRepository, createNodeRepositoryLayer, NodeNotFound } from "./nodeRepository";
+import { Effect, Layer } from "effect"
+import { Schema } from "effect"
+import * as http from "node:http"
+import { Pool } from "pg"
+import { DocService, DocServiceLive, DbPool, DbPoolLive } from "./DocService.js"
+import { DocInputSchema, SearchRequestSchema } from "./Doc.js"
 
-dotenv.config();
+// Simple HTTP server using Node.js built-in
+const PORT = parseInt(process.env.PORT || "3001", 10)
+const DATABASE_URL = process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/docs_db"
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "*"
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-const DATABASE_URL = process.env.DATABASE_URL || "";
+// CORS headers
+const corsHeaders: Record<string, string> = {
+    "Access-Control-Allow-Origin": CORS_ORIGIN,
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Content-Type": "application/json"
+}
 
-// Request logging middleware - very start
-app.use((req, res, next) => {
-  const start = Date.now();
-  const timestamp = new Date().toISOString();
-  console.log(`>>> [${timestamp}] ${req.method} ${req.url} START`);
+// Convert Doc to JSON
+const docToJson = (doc: { id: string; label: string; data: unknown; created_at: Date }) => ({
+    id: doc.id,
+    label: doc.label,
+    data: doc.data,
+    created_at: doc.created_at.toISOString()
+})
 
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    console.log(`<<< [${new Date().toISOString()}] ${req.method} ${req.url} END ${res.statusCode} (${duration}ms)`);
-  });
+// Parse request body
+const parseBody = (req: http.IncomingMessage): Promise<unknown> => {
+    return new Promise((resolve, reject) => {
+        let body = ""
+        req.on("data", (chunk) => { body += chunk })
+        req.on("end", () => {
+            try {
+                resolve(body ? JSON.parse(body) : {})
+            } catch (e) {
+                reject(e)
+            }
+        })
+        req.on("error", reject)
+    })
+}
 
-  next();
-});
+// Send JSON response
+const sendJson = (res: http.ServerResponse, status: number, data: unknown) => {
+    res.writeHead(status, corsHeaders)
+    res.end(JSON.stringify(data))
+}
 
-app.use(cors());
-app.use(express.json());
-
-// Log request details after parsing
-app.use((req, res, next) => {
-  if (Object.keys(req.query).length > 0) {
-    console.log("Query:", JSON.stringify(req.query, null, 2));
-  }
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log("Body:", JSON.stringify(req.body, null, 2));
-  }
-  next();
-});
-
-
-// Create merged runtime layer - compose layers properly
-const layer = createNodeRepositoryLayer().pipe(
-  Layer.provide(createDatabaseLayer(DATABASE_URL))
-);
-
-// Helper to run effects with proper layer provision
-const runWithLayer = async <A, E>(effect: Effect.Effect<A, E, NodeRepository>) => {
-  return Effect.runPromise(
-    Effect.scoped(effect.pipe(Effect.provide(layer)) as any)
-  );
-};
+// Route handler type
+type RouteHandler = (
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    params: Record<string, string>
+) => Effect.Effect<void, unknown, DocService>
 
 // Routes
-app.post("/api/nodes", async (req: Request, res: Response) => {
-  try {
-    const { label, data, tags } = req.body;
-    if (!label) {
-      res.status(400).json({ error: "Label is required" });
-      return;
+const routes: Array<{
+    method: string
+    pattern: RegExp
+    handler: RouteHandler
+}> = [
+        // Health check
+        {
+            method: "GET",
+            pattern: /^\/health$/,
+            handler: (_req, res) => Effect.sync(() => {
+                sendJson(res, 200, { status: "ok" })
+            })
+        },
+
+        // Get all docs
+        {
+            method: "GET",
+            pattern: /^\/api\/docs$/,
+            handler: (_req, res) => Effect.gen(function* () {
+                const service = yield* DocService
+                const docs = yield* service.getAll()
+                sendJson(res, 200, docs.map(docToJson))
+            })
+        },
+
+        // Get doc by ID
+        {
+            method: "GET",
+            pattern: /^\/api\/docs\/([^/]+)$/,
+            handler: (_req, res, params) => Effect.gen(function* () {
+                const service = yield* DocService
+                const doc = yield* service.getById(params.id!)
+                if (!doc) {
+                    sendJson(res, 404, { error: "Not found" })
+                } else {
+                    sendJson(res, 200, docToJson(doc))
+                }
+            })
+        },
+
+        // Create doc
+        {
+            method: "POST",
+            pattern: /^\/api\/docs$/,
+            handler: (req, res) => Effect.gen(function* () {
+                const service = yield* DocService
+                const body = yield* Effect.promise(() => parseBody(req))
+                const input = yield* Schema.decodeUnknown(DocInputSchema)(body)
+                const doc = yield* service.create(input)
+                sendJson(res, 201, docToJson(doc))
+            })
+        },
+
+        // Update doc
+        {
+            method: "PUT",
+            pattern: /^\/api\/docs\/([^/]+)$/,
+            handler: (req, res, params) => Effect.gen(function* () {
+                const service = yield* DocService
+                const body = yield* Effect.promise(() => parseBody(req))
+                const input = yield* Schema.decodeUnknown(Schema.Struct({
+                    label: Schema.optional(Schema.String),
+                    data: Schema.optional(Schema.Unknown)
+                }))(body)
+                const doc = yield* service.update({
+                    id: params.id!,
+                    label: input.label,
+                    data: input.data
+                })
+                if (!doc) {
+                    sendJson(res, 404, { error: "Not found" })
+                } else {
+                    sendJson(res, 200, docToJson(doc))
+                }
+            })
+        },
+
+        // Delete doc
+        {
+            method: "DELETE",
+            pattern: /^\/api\/docs\/([^/]+)$/,
+            handler: (_req, res, params) => Effect.gen(function* () {
+                const service = yield* DocService
+                yield* service.delete(params.id!)
+                sendJson(res, 200, { success: true })
+            })
+        },
+
+        // Search docs
+        {
+            method: "POST",
+            pattern: /^\/api\/docs\/search$/,
+            handler: (req, res) => Effect.gen(function* () {
+                const service = yield* DocService
+                const body = yield* Effect.promise(() => parseBody(req))
+                const input = yield* Schema.decodeUnknown(SearchRequestSchema)(body)
+                const docs = yield* service.search(input)
+                sendJson(res, 200, docs.map(docToJson))
+            })
+        }
+    ]
+
+// Match route
+const matchRoute = (method: string, url: string) => {
+    for (const route of routes) {
+        if (route.method === method) {
+            const match = url.match(route.pattern)
+            if (match) {
+                const params: Record<string, string> = {}
+                if (match[1]) params.id = match[1]
+                return { handler: route.handler, params }
+            }
+        }
     }
-    const effect = Effect.gen(function* () {
-      const repo = yield* NodeRepository;
-      return yield* repo.create(label, data || {}, tags || []);
-    });
-    const result = await runWithLayer(effect as any);
-    res.status(201).json(result);
-  } catch (error) {
-    console.error("Create error:", error);
-    res.status(500).json({ error: String(error) });
-  }
-});
+    return null
+}
 
-app.get("/api/nodes/:id", async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const effect = Effect.gen(function* () {
-      const repo = yield* NodeRepository;
-      return yield* repo.read(id);
-    });
-    const result = await runWithLayer(effect as any);
-    if (!result) {
-      res.status(404).json({ error: "Node not found" });
-      return;
-    }
-    res.json(result);
-  } catch (error) {
-    if (error instanceof NodeNotFound) {
-      res.status(404).json({ error: "Node not found" });
-    } else {
-      console.error("Read error:", error);
-      res.status(500).json({ error: String(error) });
-    }
-  }
-});
+// DbPool layer
+const PoolLayer = DbPoolLive(DATABASE_URL)
 
-app.put("/api/nodes/:id", async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const { label, data, tags } = req.body;
-    if (!label) {
-      res.status(400).json({ error: "Label is required" });
-      return;
-    }
-    const effect = Effect.gen(function* () {
-      const repo = yield* NodeRepository;
-      return yield* repo.update(id, label, data || {}, tags || []);
-    });
-    const result = await runWithLayer(effect as any);
-    res.json(result);
-  } catch (error) {
-    if (error instanceof NodeNotFound) {
-      res.status(404).json({ error: "Node not found" });
-    } else {
-      console.error("Update error:", error);
-      res.status(500).json({ error: String(error) });
-    }
-  }
-});
+// Compose DocServiceLive with DbPool
+const AppLive = DocServiceLive.pipe(Layer.provide(PoolLayer))
 
-app.delete("/api/nodes/:id", async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const effect = Effect.gen(function* () {
-      const repo = yield* NodeRepository;
-      return yield* repo.delete(id);
-    });
-    await runWithLayer(effect as any);
-    res.status(204).send();
-  } catch (error) {
-    if (error instanceof NodeNotFound) {
-      res.status(404).json({ error: "Node not found" });
-    } else {
-      console.error("Delete error:", error);
-      res.status(500).json({ error: String(error) });
-    }
-  }
-});
+// Main server
+const main = Effect.gen(function* () {
+    yield* Effect.log(`🚀 Starting server on http://localhost:${PORT}`)
+    yield* Effect.log(`📦 Database: ${DATABASE_URL}`)
 
-app.get("/api/nodes", async (req: Request, res: Response) => {
-  try {
-    const { search, tag } = req.query;
-    const effect = Effect.gen(function* () {
-      const repo = yield* NodeRepository;
-      if (tag) {
-        return yield* repo.findByTag(String(tag));
-      }
-      if (search) {
-        return yield* repo.search(String(search));
-      }
-      return yield* repo.list();
-    });
-    const result = await runWithLayer(effect as any);
-    res.json(result);
-  } catch (error) {
-    console.error("List/Search error:", error);
-    res.status(500).json({ error: String(error) });
-  }
-});
+    const server = http.createServer((req, res) => {
+        const url = req.url?.split("?")[0] || "/"
+        const method = req.method || "GET"
 
-// Serve static frontend files
-const publicPath = path.join(__dirname, "public");
-app.use(express.static(publicPath));
+        // Handle CORS preflight
+        if (method === "OPTIONS") {
+            res.writeHead(204, corsHeaders)
+            res.end()
+            return
+        }
 
-// Health check
-app.get("/health", (req: Request, res: Response) => {
-  res.json({ status: "ok" });
-});
+        const matched = matchRoute(method, url)
 
-// Health check API
-app.get("/api/health", (req: Request, res: Response) => {
-  res.json({ status: "ok" });
-});
+        if (!matched) {
+            sendJson(res, 404, { error: "Not found" })
+            return
+        }
 
-// Serve frontend for all other routes (SPA fallback)
-app.get("*", (req: Request, res: Response) => {
-  res.sendFile(path.join(publicPath, "index.html"));
-});
+        const effect = matched.handler(req, res, matched.params).pipe(
+            Effect.catchAll((error) => Effect.sync(() => {
+                console.error("Error:", error)
+                sendJson(res, 500, { error: String(error) })
+            }))
+        )
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+        Effect.runPromise(
+            effect.pipe(
+                Effect.provide(AppLive)
+            )
+        ).catch((err) => {
+            console.error("Fatal error:", err)
+            sendJson(res, 500, { error: "Internal server error" })
+        })
+    })
+
+    server.listen(PORT, () => {
+        console.log(`Server running on http://localhost:${PORT}`)
+    })
+
+    // Keep the server running
+    yield* Effect.never
+})
+
+Effect.runPromise(main).catch(console.error)

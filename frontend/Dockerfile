@@ -1,23 +1,26 @@
-FROM node:20-alpine as builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-COPY package*.json ./
+# Accept build args for Vite env vars
+ARG VITE_API_URL
+ENV VITE_API_URL=$VITE_API_URL
 
+COPY package*.json ./
 RUN npm install
 
 COPY . .
-
 RUN npm run build
 
-FROM node:20-alpine
+# Production stage
+FROM node:22-alpine
 
 WORKDIR /app
 
 RUN npm install -g serve
 
-COPY --from=builder /app/build ./build
+COPY --from=builder /app/dist ./dist
 
 EXPOSE 3000
 
-CMD ["serve", "-s", "build", "-l", "3000"]
+CMD ["serve", "-s", "dist", "-l", "3000"]
