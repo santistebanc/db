@@ -2,13 +2,6 @@ import { Effect, Context, Layer, Schedule } from "effect";
 import { Pool } from "pg";
 import * as dns from "dns/promises";
 
-// Explicitly use Docker's internal DNS resolver
-try {
-  dns.setServers(["127.0.0.11", "8.8.8.8"]);
-} catch (e) {
-  console.warn("[Database] Could not set custom DNS servers", e);
-}
-
 export interface Node {
   id: string;
   label: string;
@@ -25,34 +18,21 @@ export class DatabaseError {
 let pool: Pool | null = null;
 let resolvedConnectionString: string | null = null;
 
-/**
- * Ultra-persistent DNS resolution. 
- * Tries several hostnames with multiple retries to overcome ESERVFAIL in Dokploy.
- */
-const forcefulResolve = async (hostname: string, maxRetries = 10): Promise<string> => {
-  const hostnamesToTry = [hostname, "db-postgres-1", "db_postgres"];
-
-  for (let i = 0; i < maxRetries; i++) {
-    for (const host of hostnamesToTry) {
-      try {
-        console.log(`[Database] DNS Attempt ${i + 1}/${maxRetries} for: ${host}`);
-        const addresses = await dns.resolve4(host);
-        if (addresses && addresses.length > 0) {
-          console.log(`[Database] SUCCESS: Resolved ${host} to IP: ${addresses[0]}`);
-          return addresses[0];
-        }
-      } catch (err) {
-        // Only log on last retry to stay clean
-        if (i === maxRetries - 1) {
-          console.warn(`[Database] DNS Final match failed for ${host}: ${String(err)}`);
-        }
+const resolveWithRetry = async (hostname: string): Promise<string> => {
+  const targets = [hostname, "db-postgres-1", "127.0.0.1"];
+  for (const target of targets) {
+    try {
+      if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(target)) return target;
+      console.log(`[Database] Resolving: ${target}`);
+      const addresses = await dns.resolve4(target);
+      if (addresses && addresses.length > 0) {
+        console.log(`[Database] Success: ${target} -> ${addresses[0]}`);
+        return addresses[0];
       }
+    } catch (e) {
+      console.warn(`[Database] Lookup failed for ${target}: ${String(e)}`);
     }
-    // Wait 1s before retrying to allow Docker DNS to propagate
-    await new Promise(resolve => setTimeout(resolve, 1000));
   }
-
-  console.error(`[Database] FATAL: All ${maxRetries} DNS attempts failed. Falling back to original hostname.`);
   return hostname;
 };
 
@@ -61,30 +41,29 @@ const getPool = async (connectionString: string): Promise<Pool> => {
     if (!resolvedConnectionString) {
       try {
         const url = new URL(connectionString);
-        const originalHost = url.hostname;
-
-        if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(originalHost) && originalHost !== 'localhost') {
-          const ip = await forcefulResolve(originalHost);
-          url.hostname = ip;
+        if (url.hostname !== 'localhost' && !/^(?:\d{1,3}\.){3}\d{1,3}$/.test(url.hostname)) {
+          url.hostname = await resolveWithRetry(url.hostname);
           resolvedConnectionString = url.toString();
         } else {
           resolvedConnectionString = connectionString;
         }
-      } catch (err: any) {
-        console.error("[Database] Pre-resolution failed", err);
+      } catch (err) {
+        console.error("[Database] URL resolution failed", err);
         resolvedConnectionString = connectionString;
       }
     }
 
     pool = new Pool({
       connectionString: resolvedConnectionString,
-      connectionTimeoutMillis: 20000, // Higher timeout for slow networks
+      connectionTimeoutMillis: 30000,
       idleTimeoutMillis: 30000,
       max: 20
     });
 
     pool.on('error', (err) => {
       console.error('[Database Pool Error]', err);
+      // Reset pool on fatal errors to trigger re-connection/re-resolution
+      pool = null;
     });
   }
   return pool;

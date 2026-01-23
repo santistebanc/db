@@ -12,6 +12,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - app-network
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 5s
@@ -29,6 +31,8 @@ services:
       PORT: 3000
       NODE_ENV: production
       UV_THREADPOOL_SIZE: 64
+    networks:
+      - app-network
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,8 +45,14 @@ services:
       - "5050:8081"
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/nodes_db?sslmode=disable
+    networks:
+      - app-network
     depends_on:
       - postgres
+
+networks:
+  app-network:
+    driver: bridge
 
 volumes:
   postgres_data:
