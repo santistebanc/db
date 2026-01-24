@@ -139,16 +139,7 @@ const formatData = (data: unknown): string => {
     }
 }
 
-// Parse JSON input
-const parseJsonInput = (input: string): unknown => {
-    if (!input.trim()) return {}
-    try {
-        return JSON.parse(input)
-    } catch {
-        // If not valid JSON, treat as plain text
-        return { text: input }
-    }
-}
+
 
 function App() {
     const [docs, setDocs] = useState<Doc[]>([])
@@ -233,9 +224,16 @@ function App() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
 
+        // Validate JSON
+        let parsedData: unknown
         try {
-            const parsedData = parseJsonInput(formData)
+            parsedData = formData.trim() ? JSON.parse(formData) : {}
+        } catch (e) {
+            showToast('Invalid JSON: Please fix syntax errors', 'error')
+            return
+        }
 
+        try {
             // Parse and sanitize tags
             const tags = formTags
                 .trim()
