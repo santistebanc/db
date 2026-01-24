@@ -18,11 +18,7 @@ interface Toast {
 
 // API configuration
 // In production, use the VITE_API_URL env var or same origin for reverse proxy setups
-const API_URL = import.meta.env.VITE_API_URL || (
-    typeof window !== 'undefined' && window.location.hostname !== 'localhost'
-        ? '' // Same origin - API proxied at same domain
-        : 'http://localhost:3001'
-)
+const API_URL = import.meta.env.VITE_API_URL || ''
 
 // API functions
 const api = {
