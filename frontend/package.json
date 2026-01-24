@@ -9,10 +9,13 @@
     },
     "dependencies": {
         "@microlink/react-json-view": "^1.27.1",
+        "prismjs": "^1.30.0",
         "react": "^18.3.1",
-        "react-dom": "^18.3.1"
+        "react-dom": "^18.3.1",
+        "react-simple-code-editor": "^0.14.1"
     },
     "devDependencies": {
+        "@types/prismjs": "^1.26.5",
         "@types/react": "^18.3.18",
         "@types/react-dom": "^18.3.5",
         "@vitejs/plugin-react": "^4.3.4",

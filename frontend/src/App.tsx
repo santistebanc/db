@@ -1,5 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import ReactJson from '@microlink/react-json-view'
+import Editor from 'react-simple-code-editor'
+import { highlight, languages } from 'prismjs'
+import 'prismjs/components/prism-json'
+import 'prismjs/themes/prism-tomorrow.css'
 
 // Types
 interface Doc {
@@ -126,7 +130,25 @@ const formatDate = (dateStr: string): string => {
     })
 }
 
+// Format JSON for display
+const formatData = (data: unknown): string => {
+    try {
+        return JSON.stringify(data, null, 2)
+    } catch {
+        return String(data)
+    }
+}
 
+// Parse JSON input
+const parseJsonInput = (input: string): unknown => {
+    if (!input.trim()) return {}
+    try {
+        return JSON.parse(input)
+    } catch {
+        // If not valid JSON, treat as plain text
+        return { text: input }
+    }
+}
 
 function App() {
     const [docs, setDocs] = useState<Doc[]>([])
@@ -137,7 +159,7 @@ function App() {
     const [editingDoc, setEditingDoc] = useState<Doc | null>(null)
     const [formLabel, setFormLabel] = useState('')
     const [formTags, setFormTags] = useState('')
-    const [formData, setFormData] = useState<object>({})
+    const [formData, setFormData] = useState('')
     const [toasts, setToasts] = useState<Toast[]>([])
 
     // Toast helper
@@ -194,7 +216,7 @@ function App() {
         setEditingDoc(null)
         setFormLabel('')
         setFormTags('')
-        setFormData({})
+        setFormData('')
         setIsModalOpen(true)
     }
 
@@ -203,7 +225,7 @@ function App() {
         setEditingDoc(doc)
         setFormLabel(doc.label)
         setFormTags(doc.tags ? doc.tags.join(' ') : '')
-        setFormData(doc.data as object)
+        setFormData(formatData(doc.data))
         setIsModalOpen(true)
     }
 
@@ -212,7 +234,7 @@ function App() {
         e.preventDefault()
 
         try {
-
+            const parsedData = parseJsonInput(formData)
 
             // Parse and sanitize tags
             const tags = formTags
@@ -222,10 +244,10 @@ function App() {
                 .map(t => t.toLowerCase().replace(/[^a-z0-9_]/g, '_'))
 
             if (editingDoc) {
-                await api.updateDoc(editingDoc.id, formLabel, tags, formData)
+                await api.updateDoc(editingDoc.id, formLabel, tags, parsedData)
                 showToast('Document updated successfully', 'success')
             } else {
-                await api.createDoc(formLabel, tags, formData)
+                await api.createDoc(formLabel, tags, parsedData)
                 showToast('Document created successfully', 'success')
             }
 
@@ -414,17 +436,19 @@ function App() {
                                 </div>
                                 <div className="form-group">
                                     <label htmlFor="data">Data (JSON)</label>
-                                    <div className="json-editor-wrapper" style={{ border: '1px solid var(--border-color)', padding: '0.5rem', background: 'var(--bg-primary)', minHeight: '150px' }}>
-                                        <ReactJson
-                                            src={formData}
-                                            theme="apathy"
-                                            name={false}
-                                            displayDataTypes={false}
-                                            enableClipboard={false}
-                                            onEdit={(edit) => setFormData(edit.updated_src)}
-                                            onAdd={(edit) => setFormData(edit.updated_src)}
-                                            onDelete={(edit) => setFormData(edit.updated_src)}
-                                            style={{ backgroundColor: 'transparent', fontSize: '0.8rem' }}
+                                    <div className="json-editor-wrapper" style={{ border: '1px solid var(--border-color)', background: 'var(--bg-primary)', minHeight: '150px' }}>
+                                        <Editor
+                                            value={formData}
+                                            onValueChange={code => setFormData(code)}
+                                            highlight={code => highlight(code, languages.json, 'json')}
+                                            padding={10}
+                                            style={{
+                                                fontFamily: '"Fira code", "Fira Mono", monospace',
+                                                fontSize: 12,
+                                                backgroundColor: 'transparent',
+                                                color: 'var(--text-primary)'
+                                            }}
+                                            textareaClassName="focus:outline-none"
                                         />
                                     </div>
                                 </div>
