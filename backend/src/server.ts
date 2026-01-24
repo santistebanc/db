@@ -19,9 +19,10 @@ const corsHeaders: Record<string, string> = {
 }
 
 // Convert Doc to JSON
-const docToJson = (doc: { id: string; label: string; data: unknown; created_at: Date }) => ({
+const docToJson = (doc: { id: string; label: string; tags: readonly string[]; data: unknown; created_at: Date }) => ({
     id: doc.id,
     label: doc.label,
+    tags: doc.tags,
     data: doc.data,
     created_at: doc.created_at.toISOString()
 })
@@ -118,11 +119,13 @@ const routes: Array<{
                 const body = yield* Effect.promise(() => parseBody(req))
                 const input = yield* Schema.decodeUnknown(Schema.Struct({
                     label: Schema.optional(Schema.String),
+                    tags: Schema.optional(Schema.Array(Schema.String)),
                     data: Schema.optional(Schema.Unknown)
                 }))(body)
                 const doc = yield* service.update({
                     id: params.id!,
                     label: input.label,
+                    tags: input.tags,
                     data: input.data
                 })
                 if (!doc) {

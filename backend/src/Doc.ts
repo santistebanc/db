@@ -4,6 +4,7 @@ import { Schema } from "effect"
 export class Doc extends Schema.Class<Doc>("Doc")({
     id: Schema.String,
     label: Schema.String,
+    tags: Schema.Array(Schema.String),
     data: Schema.Unknown, // JSONB - can be any JSON value
     created_at: Schema.DateFromString
 }) { }
@@ -11,6 +12,7 @@ export class Doc extends Schema.Class<Doc>("Doc")({
 // Schema for creating a new doc (without id and created_at)
 export const DocInputSchema = Schema.Struct({
     label: Schema.String,
+    tags: Schema.optional(Schema.Array(Schema.String.pipe(Schema.pattern(/^[a-z0-9_]+$/)))),
     data: Schema.optional(Schema.Unknown)
 })
 
@@ -20,6 +22,7 @@ export type DocInput = typeof DocInputSchema.Type
 export const DocUpdateSchema = Schema.Struct({
     id: Schema.String,
     label: Schema.optional(Schema.String),
+    tags: Schema.optional(Schema.Array(Schema.String)),
     data: Schema.optional(Schema.Unknown)
 })
 
@@ -38,6 +41,7 @@ export type SearchRequest = typeof SearchRequestSchema.Type
 export const DocEncoded = Schema.Struct({
     id: Schema.String,
     label: Schema.String,
+    tags: Schema.Array(Schema.String),
     data: Schema.Unknown,
     created_at: Schema.String
 })

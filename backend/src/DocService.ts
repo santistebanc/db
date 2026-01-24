@@ -22,6 +22,7 @@ export class DocService extends Context.Tag("DocService")<
 const rowToDoc = (row: {
     id: string
     label: string
+    tags: string[]
     data: unknown
     created_at: Date | string
 }): Doc => {
@@ -31,6 +32,7 @@ const rowToDoc = (row: {
     return new Doc({
         id: row.id,
         label: row.label,
+        tags: row.tags || [],
         data: row.data,
         created_at: createdAt
     })
@@ -49,6 +51,7 @@ const query = <T>(pool: Pool, sql: string, params?: unknown[]): Effect.Effect<T[
 type DbRow = {
     id: string
     label: string
+    tags: string[]
     data: unknown
     created_at: Date
 }
@@ -64,9 +67,15 @@ export const DocServiceLive = Layer.effect(
             CREATE TABLE IF NOT EXISTS docs (
                 id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
                 label TEXT NOT NULL,
+                tags TEXT[] NOT NULL DEFAULT '{}',
                 data JSONB NOT NULL DEFAULT '{}',
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
+        `).pipe(Effect.catchAll(() => Effect.succeed([])))
+
+        // Migration: Add tags column if it doesn't exist
+        yield* query(pool, `
+            ALTER TABLE docs ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'
         `).pipe(Effect.catchAll(() => Effect.succeed([])))
 
         // Create indexes
@@ -82,11 +91,12 @@ export const DocServiceLive = Layer.effect(
             create: (input: DocInput) =>
                 Effect.gen(function* () {
                     const dataJson = JSON.stringify(input.data ?? {})
+                    const tags = input.tags ?? []
                     const rows = yield* query<DbRow>(pool, `
-                        INSERT INTO docs (label, data)
-                        VALUES ($1, $2::jsonb)
-                        RETURNING id, label, data, created_at
-                    `, [input.label, dataJson])
+                        INSERT INTO docs (label, tags, data)
+                        VALUES ($1, $2::text[], $3::jsonb)
+                        RETURNING id, label, tags, data, created_at
+                    `, [input.label, tags, dataJson])
 
                     const row = rows[0]
                     if (!row) {
@@ -98,7 +108,7 @@ export const DocServiceLive = Layer.effect(
             getAll: () =>
                 Effect.gen(function* () {
                     const rows = yield* query<DbRow>(pool, `
-                        SELECT id, label, data, created_at 
+                        SELECT id, label, tags, data, created_at 
                         FROM docs 
                         ORDER BY created_at DESC
                     `)
@@ -108,7 +118,7 @@ export const DocServiceLive = Layer.effect(
             getById: (id: string) =>
                 Effect.gen(function* () {
                     const rows = yield* query<DbRow>(pool, `
-                        SELECT id, label, data, created_at 
+                        SELECT id, label, tags, data, created_at 
                         FROM docs 
                         WHERE id = $1
                     `, [id])
@@ -118,9 +128,9 @@ export const DocServiceLive = Layer.effect(
 
             update: (input: DocUpdate) =>
                 Effect.gen(function* () {
-                    if (input.label === undefined && input.data === undefined) {
+                    if (input.label === undefined && input.data === undefined && input.tags === undefined) {
                         const rows = yield* query<DbRow>(pool, `
-                            SELECT id, label, data, created_at 
+                            SELECT id, label, tags, data, created_at 
                             FROM docs 
                             WHERE id = $1
                         `, [input.id])
@@ -128,32 +138,35 @@ export const DocServiceLive = Layer.effect(
                         return row ? rowToDoc(row) : null
                     }
 
-                    let rows: DbRow[]
 
-                    if (input.label !== undefined && input.data !== undefined) {
-                        const dataJson = JSON.stringify(input.data)
-                        rows = yield* query<DbRow>(pool, `
-                            UPDATE docs 
-                            SET label = $1, data = $2::jsonb
-                            WHERE id = $3
-                            RETURNING id, label, data, created_at
-                        `, [input.label, dataJson, input.id])
-                    } else if (input.label !== undefined) {
-                        rows = yield* query<DbRow>(pool, `
-                            UPDATE docs 
-                            SET label = $1
-                            WHERE id = $2
-                            RETURNING id, label, data, created_at
-                        `, [input.label, input.id])
-                    } else {
-                        const dataJson = JSON.stringify(input.data)
-                        rows = yield* query<DbRow>(pool, `
-                            UPDATE docs 
-                            SET data = $1::jsonb
-                            WHERE id = $2
-                            RETURNING id, label, data, created_at
-                        `, [dataJson, input.id])
+
+                    // Construct dynamic update query
+                    const updates: string[] = []
+                    const values: any[] = []
+                    let paramCount = 1
+
+                    if (input.label !== undefined) {
+                        updates.push(`label = $${paramCount++}`)
+                        values.push(input.label)
                     }
+                    if (input.tags !== undefined) {
+                        updates.push(`tags = $${paramCount++}::text[]`)
+                        values.push(input.tags)
+                    }
+                    if (input.data !== undefined) {
+                        updates.push(`data = $${paramCount++}::jsonb`)
+                        values.push(JSON.stringify(input.data))
+                    }
+
+                    // Add ID as last param
+                    values.push(input.id)
+
+                    const rows = yield* query<DbRow>(pool, `
+                        UPDATE docs 
+                        SET ${updates.join(", ")}
+                        WHERE id = $${paramCount}
+                        RETURNING id, label, tags, data, created_at
+                    `, values)
 
                     const row = rows[0]
                     return row ? rowToDoc(row) : null
@@ -172,7 +185,7 @@ export const DocServiceLive = Layer.effect(
 
                     if (!queryText) {
                         const rows = yield* query<DbRow>(pool, `
-                            SELECT id, label, data, created_at 
+                            SELECT id, label, tags, data, created_at 
                             FROM docs 
                             ORDER BY created_at DESC
                             LIMIT $1
@@ -184,11 +197,12 @@ export const DocServiceLive = Layer.effect(
                     const searchPattern = `%${queryText.toLowerCase()}%`
 
                     const rows = yield* query<DbRow>(pool, `
-                        SELECT id, label, data, created_at 
+                        SELECT id, label, tags, data, created_at 
                         FROM docs 
                         WHERE 
                             LOWER(label) LIKE $1
                             OR LOWER(data::text) LIKE $1
+                            OR EXISTS (SELECT 1 FROM unnest(tags) t WHERE LOWER(t) LIKE $1)
                         ORDER BY 
                             CASE 
                                 WHEN LOWER(label) LIKE $1 THEN 0

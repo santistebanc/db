@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 interface Doc {
     id: string
     label: string
+    tags: string[]
     data: unknown
     created_at: string
 }
@@ -28,21 +29,21 @@ const api = {
         return res.json()
     },
 
-    async createDoc(label: string, data: unknown): Promise<Doc> {
+    async createDoc(label: string, tags: string[], data: unknown): Promise<Doc> {
         const res = await fetch(`${API_URL}/api/docs`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ label, data })
+            body: JSON.stringify({ label, tags, data })
         })
         if (!res.ok) throw new Error('Failed to create doc')
         return res.json()
     },
 
-    async updateDoc(id: string, label?: string, data?: unknown): Promise<Doc> {
+    async updateDoc(id: string, label?: string, tags?: string[], data?: unknown): Promise<Doc> {
         const res = await fetch(`${API_URL}/api/docs/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ label, data })
+            body: JSON.stringify({ label, tags, data })
         })
         if (!res.ok) throw new Error('Failed to update doc')
         return res.json()
@@ -152,6 +153,7 @@ function App() {
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [editingDoc, setEditingDoc] = useState<Doc | null>(null)
     const [formLabel, setFormLabel] = useState('')
+    const [formTags, setFormTags] = useState('')
     const [formData, setFormData] = useState('')
     const [toasts, setToasts] = useState<Toast[]>([])
 
@@ -208,6 +210,7 @@ function App() {
     const openCreateModal = () => {
         setEditingDoc(null)
         setFormLabel('')
+        setFormTags('')
         setFormData('')
         setIsModalOpen(true)
     }
@@ -216,6 +219,7 @@ function App() {
     const openEditModal = (doc: Doc) => {
         setEditingDoc(doc)
         setFormLabel(doc.label)
+        setFormTags(doc.tags ? doc.tags.join(' ') : '')
         setFormData(formatData(doc.data))
         setIsModalOpen(true)
     }
@@ -227,11 +231,18 @@ function App() {
         try {
             const parsedData = parseJsonInput(formData)
 
+            // Parse and sanitize tags
+            const tags = formTags
+                .trim()
+                .split(/\s+/)
+                .filter(Boolean)
+                .map(t => t.toLowerCase().replace(/[^a-z0-9_]/g, '_'))
+
             if (editingDoc) {
-                await api.updateDoc(editingDoc.id, formLabel, parsedData)
+                await api.updateDoc(editingDoc.id, formLabel, tags, parsedData)
                 showToast('Document updated successfully', 'success')
             } else {
-                await api.createDoc(formLabel, parsedData)
+                await api.createDoc(formLabel, tags, parsedData)
                 showToast('Document created successfully', 'success')
             }
 
@@ -341,6 +352,14 @@ function App() {
                                     <span className="doc-label">{doc.label}</span>
                                     <span className="doc-id">{doc.id.slice(0, 8)}...</span>
                                 </div>
+                                {doc.tags && doc.tags.length > 0 && (
+                                    <div className="doc-tags-list">
+                                        {doc.tags.map(tag => (
+                                            <span key={tag} className="tag-badge">{tag}</span>
+                                        ))}
+                                    </div>
+                                )}
+
                                 <div className="doc-data">
                                     <pre>{formatData(doc.data)}</pre>
                                 </div>
@@ -371,49 +390,62 @@ function App() {
             </div>
 
             {/* Modal */}
-            {isModalOpen && (
-                <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
-                    <div className="modal" onClick={(e) => e.stopPropagation()}>
-                        <h2>{editingDoc ? 'Edit Document' : 'Create Document'}</h2>
-                        <form onSubmit={handleSubmit}>
-                            <div className="form-group">
-                                <label htmlFor="label">Label</label>
-                                <input
-                                    id="label"
-                                    type="text"
-                                    className="form-input"
-                                    placeholder="Enter document label..."
-                                    value={formLabel}
-                                    onChange={(e) => setFormLabel(e.target.value)}
-                                    required
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label htmlFor="data">Data (JSON)</label>
-                                <textarea
-                                    id="data"
-                                    className="form-input form-textarea"
-                                    placeholder='{"key": "value", "nested": {"field": "data"}}'
-                                    value={formData}
-                                    onChange={(e) => setFormData(e.target.value)}
-                                />
-                            </div>
-                            <div className="modal-actions">
-                                <button
-                                    type="button"
-                                    className="btn btn-secondary"
-                                    onClick={() => setIsModalOpen(false)}
-                                >
-                                    Cancel
-                                </button>
-                                <button type="submit" className="btn btn-primary">
-                                    {editingDoc ? 'Update' : 'Create'}
-                                </button>
-                            </div>
-                        </form>
+            {
+                isModalOpen && (
+                    <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
+                        <div className="modal" onClick={(e) => e.stopPropagation()}>
+                            <h2>{editingDoc ? 'Edit Document' : 'Create Document'}</h2>
+                            <form onSubmit={handleSubmit}>
+                                <div className="form-group">
+                                    <label htmlFor="label">Label</label>
+                                    <input
+                                        id="label"
+                                        type="text"
+                                        className="form-input"
+                                        placeholder="Enter document label..."
+                                        value={formLabel}
+                                        onChange={(e) => setFormLabel(e.target.value)}
+                                        required
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="tags">Tags</label>
+                                    <input
+                                        id="tags"
+                                        type="text"
+                                        className="form-input"
+                                        placeholder="space separated tags (e.g. database important v1)"
+                                        value={formTags}
+                                        onChange={(e) => setFormTags(e.target.value)}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="data">Data (JSON)</label>
+                                    <textarea
+                                        id="data"
+                                        className="form-input form-textarea"
+                                        placeholder='{"key": "value", "nested": {"field": "data"}}'
+                                        value={formData}
+                                        onChange={(e) => setFormData(e.target.value)}
+                                    />
+                                </div>
+                                <div className="modal-actions">
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() => setIsModalOpen(false)}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button type="submit" className="btn btn-primary">
+                                        {editingDoc ? 'Update' : 'Create'}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Toasts */}
             <div className="toast-container">
@@ -423,7 +455,7 @@ function App() {
                     </div>
                 ))}
             </div>
-        </div>
+        </div >
     )
 }
 
