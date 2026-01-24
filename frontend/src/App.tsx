@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import ReactJson from '@microlink/react-json-view'
 
 // Types
 interface Doc {
@@ -361,7 +362,16 @@ function App() {
                                 )}
 
                                 <div className="doc-data">
-                                    <pre>{formatData(doc.data)}</pre>
+                                    <div style={{ fontSize: '0.8rem' }}>
+                                        <ReactJson
+                                            src={doc.data as object}
+                                            theme="apathy"
+                                            collapsed={1}
+                                            displayDataTypes={false}
+                                            enableClipboard={false}
+                                            style={{ backgroundColor: 'transparent' }}
+                                        />
+                                    </div>
                                 </div>
                                 <div className="doc-footer">
                                     <span className="doc-date">
